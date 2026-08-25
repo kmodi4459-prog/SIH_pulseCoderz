@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crisis Monitoring Portal - Operations Center</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-page: #f4f6f9;
+            --card-shadow: rgba(0,0,0,0.06);
+        }
+        [data-bs-theme="dark"] {
+            --bg-page: #121417;
+            --card-shadow: rgba(0,0,0,0.4);
+        }
+        body { background-color: var(--bg-page); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; transition: background-color 0.3s; }
+        .card { border-radius: 10px; border: none; box-shadow: 0 2px 6px var(--card-shadow); }
+        .risk-badge { font-weight: 600; padding: 0.35em 0.75em; border-radius: 20px; font-size: 0.85rem; }
+        .risk-low { background-color: #d1e7dd; color: #0f5132; }
+        .risk-medium { background-color: #fff3cd; color: #664d03; }
+        .risk-high { background-color: #f8d7da; color: #842029; }
+        [data-bs-theme="dark"] .risk-low { background-color: #0f5132; color: #d1e7dd; }
+        [data-bs-theme="dark"] .risk-medium { background-color: #664d03; color: #fff3cd; }
+        [data-bs-theme="dark"] .risk-high { background-color: #842029; color: #f8d7da; }
+        
+        .table-hover tbody tr { cursor: pointer; }
+        .selected-row { background-color: rgba(13, 110, 253, 0.12) !important; font-weight: 600; }
+        
+        .pulse-dot {
+            height: 10px; width: 10px; background-color: #198754;
+            border-radius: 50%; display: inline-block;
+            box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.7);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(25, 135, 84, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(25, 135, 84, 0); }
+        }
+
+        .chat-bubble { border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; max-width: 85%; }
+        .chat-user { background-color: rgba(220, 53, 69, 0.1); border-left: 4px solid #dc3545; margin-right: auto; }
+        .chat-bot { background-color: rgba(13, 110, 253, 0.1); border-left: 4px solid #0d6efd; margin-left: auto; text-align: right; }
+        
+        .call-pulsing-icon { animation: callPulse 1.2s infinite; }
+        @keyframes callPulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.15); color: #198754; }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Navigation Bar -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark px-4">
+    <a class="navbar-brand fw-bold" href="#"><i class="bi bi-shield-shaded me-2"></i>Crisis Monitoring Portal</a>
+    <div class="ms-auto text-light small d-flex align-items-center gap-2 flex-wrap">
+        <!-- Live Chat Link -->
+        <a href="/chat" target="_blank" class="btn btn-sm btn-outline-info">
+            <i class="bi bi-chat-dots me-1"></i> Victim Chat
+        </a>
+        
+        <!-- Day 6: Demo Mode Toggle -->
+        <button id="demo-mode-btn" class="btn btn-sm btn-outline-light" onclick="toggleDemoMode()">
+            <i class="bi bi-play-circle me-1"></i> Demo Mode: OFF
+        </button>
+
+        <!-- Day 6: Theme Toggle -->
+        <button id="theme-btn" class="btn btn-sm btn-outline-secondary text-light" onclick="toggleTheme()">
+            <i class="bi bi-moon-stars-fill"></i>
+        </button>
+
+        <!-- Audio Alert Toggle -->
+        <button id="audio-toggle-btn" class="btn btn-sm btn-outline-warning" onclick="toggleAudioAlerts()">
+            <i class="bi bi-volume-up-fill me-1"></i> Sound: ON
+        </button>
+
+        <span class="badge bg-danger" id="nav-alert-badge">0 Alerts</span>
+        <div class="d-flex align-items-center gap-2 ms-2">
+            <span class="pulse-dot"></span>
+            <span id="sync-status-text">Live (0s ago)</span>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid py-4 px-4">
+
+    <!-- Offline Warning -->
+    <div id="offline-banner" class="alert alert-warning d-none d-flex align-items-center mb-3" role="alert">
+        <i class="bi bi-wifi-off fs-4 me-2"></i>
+        <div><strong>Server Reconnecting:</strong> Operating in fallback sync mode...</div>
+    </div>
+
+    <!-- Critical Distress Alert Banner -->
+    <div id="alert-banner-container"></div>
+
+    <!-- Summary Metrics -->
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="card p-3 border-start border-4 border-primary">
+                <div class="text-muted small">Total Monitored</div>
+                <div class="fs-4 fw-bold" id="stat-total">-</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="card p-3 border-start border-4 border-danger">
+                <div class="text-muted small">High Risk (Score > 70)</div>
+                <div class="fs-4 fw-bold text-danger" id="stat-high">-</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="card p-3 border-start border-4 border-warning">
+                <div class="text-muted small">Moderate Risk (41 - 70)</div>
+                <div class="fs-4 fw-bold text-warning" id="stat-med">-</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="card p-3 border-start border-4 border-success">
+                <div class="text-muted small">Stable (0 - 40)</div>
+                <div class="fs-4 fw-bold text-success" id="stat-low">-</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs & CSV Export Button -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <ul class="nav nav-pills" id="dashboardTabs" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active fw-semibold" id="live-tab" data-bs-toggle="pill" data-bs-target="#live-view" type="button">
+                    <i class="bi bi-speedometer2 me-1"></i> Live Monitoring
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link fw-semibold" id="alerts-tab" data-bs-toggle="pill" data-bs-target="#alerts-view" type="button">
+                    <i class="bi bi-bell-fill me-1"></i> Incident & Alert Log <span class="badge bg-danger ms-1" id="tab-alert-badge">0</span>
+                </button>
+            </li>
+        </ul>
+        
+        <!-- Day 6: Export CSV Report -->
+        <button class="btn btn-sm btn-outline-success" onclick="exportIncidentReportCSV()">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i> Export CSV Report
+        </button>
+    </div>
+
+    <div class="tab-content" id="dashboardTabContent">
+        
+        <!-- TAB 1: Live Monitoring View -->
+        <div class="tab-pane fade show active" id="live-view" role="tabpanel">
+            <div class="card p-3 mb-4">
+                <div class="row g-3 align-items-center">
+                    <div class="col-md-6">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" id="search-input" class="form-control" placeholder="Search by victim name or ID..." oninput="applyFilters()">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <select id="risk-filter" class="form-select" onchange="applyFilters()">
+                            <option value="all">Filter by Risk: All Levels</option>
+                            <option value="high">High Risk (> 70)</option>
+                            <option value="medium">Moderate Risk (41 - 70)</option>
+                            <option value="low">Stable (0 - 40)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 text-end">
+                        <button class="btn btn-outline-secondary w-100" onclick="fetchDashboardData()">
+                            <i class="bi bi-arrow-clockwise me-1"></i> Sync
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <!-- Left: Table -->
+                <div class="col-lg-7">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="fw-bold mb-0">Monitored Individuals</h5>
+                            <span id="loading-spinner" class="spinner-border spinner-border-sm text-primary d-none" role="status"></span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Name</th>
+                                        <th>Latest Mood</th>
+                                        <th>Distress Score</th>
+                                        <th>Risk Level</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="victim-table-body">
+                                    <tr><td colspan="6" class="text-center text-muted py-4">Connecting to system database...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Two Charts -->
+                <div class="col-lg-5 d-flex flex-column gap-3">
+                    <div class="card p-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="fw-bold mb-0"><i class="bi bi-graph-up me-1"></i>Distress Trend</h6>
+                            <span class="badge bg-secondary" id="chart-victim-label">Select a victim</span>
+                        </div>
+                        <div style="position: relative; height: 180px;">
+                            <canvas id="trendChart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="card p-3">
+                        <h6 class="fw-bold mb-2"><i class="bi bi-pie-chart-fill me-1"></i>Overall Risk Breakdown</h6>
+                        <div style="position: relative; height: 160px;">
+                            <canvas id="doughnutChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: Incident Log -->
+        <div class="tab-pane fade" id="alerts-view" role="tabpanel">
+            <div class="card p-3">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold mb-0"><i class="bi bi-shield-exclamation text-danger me-2"></i>Critical Incident Dispatch Log</h5>
+                    <span class="text-muted small">Auto-triggered when Distress Score &gt; 70</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-bordered align-middle">
+                        <thead class="table-danger">
+                            <tr>
+                                <th>Incident ID</th>
+                                <th>Victim</th>
+                                <th>Reported Distress</th>
+                                <th>Status</th>
+                                <th>Dispatcher Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alerts-table-body">
+                            <!-- Populated via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- ================= MODALS ================= -->
+
+<!-- 1. Victim Chat & NLP Sentiment Log Modal -->
+<div class="modal fade" id="historyModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title"><i class="bi bi-chat-left-text me-2"></i>Victim History & NLP Sentiment Log</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex justify-content-between align-items-center p-3 bg-body-secondary rounded mb-3">
+                    <div>
+                        <h6 class="mb-0 fw-bold" id="modal-victim-name">Victim Name</h6>
+                        <small class="text-muted" id="modal-victim-id">ID: #000</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge" id="modal-victim-badge">Score: 0/100</span>
+                        <button class="btn btn-sm btn-danger" onclick="initiateEmergencyCall()">
+                            <i class="bi bi-telephone-outbound-fill me-1"></i> Trigger IVRS Call
+                        </button>
+                    </div>
+                </div>
+
+                <h6 class="fw-bold mb-2">Recorded Check-ins & Sentiment Scores:</h6>
+                <div id="modal-chat-container" class="p-3 border rounded bg-body" style="max-height: 300px; overflow-y: auto;">
+                    <div class="text-center text-muted py-3">Loading conversation logs...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 2. IVRS Voice Call Simulation Modal -->
+<div class="modal fade" id="callModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content text-center p-4">
+            <div class="mb-3">
+                <i id="call-icon" class="bi bi-telephone-outbound-fill text-danger fs-1 call-pulsing-icon"></i>
+            </div>
+            <h4 class="fw-bold" id="call-title">Initiating Emergency Call...</h4>
+            <p class="text-muted small" id="call-subtitle">Contacting victim via Automated IVRS Voice System</p>
+            
+            <div class="p-3 bg-body-secondary rounded text-start mb-3" id="call-status-box">
+                <div class="d-flex align-items-center mb-2">
+                    <span class="spinner-border spinner-border-sm text-primary me-2"></span>
+                    <strong id="call-step-text">Connecting to carrier network...</strong>
+                </div>
+                <div class="small text-muted" id="call-transcript-box">
+                    <em>Awaiting connection...</em>
+                </div>
+            </div>
+
+            <button type="button" class="btn btn-outline-danger" data-bs-dismiss="modal" onclick="resetCallSimulation()">
+                End Simulation
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Bootstrap 5 JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+<!-- Dashboard JavaScript Logic -->
+<script>
+    let allVictims = [];
+    let selectedVictimId = null;
+    let trendChartInstance = null;
+    let doughnutChartInstance = null;
+    let activeVictimForCall = null;
+    
+    let soundEnabled = true;
+    let isDemoMode = false;
+    let isDarkMode = false;
+    let lastKnownAlertCount = 0;
+    let secondsSinceLastSync = 0;
+
+    // Day 6: Standalone Demo Data Cache for Pitch Failsafe
+    const demoFallbackVictims = [
+        { id: 101, name: "Sarah Jenkins (Shelter A)", mood: "😭 Overwhelmed", score: 85, dispatched: false },
+        { id: 102, name: "Alex Martinez (Relocation Hub)", mood: "😟 Anxious", score: 62, dispatched: false },
+        { id: 103, name: "Rahul Sharma (Safe Zone 4)", mood: "😐 Neutral", score: 35, dispatched: false },
+        { id: 104, name: "Priya Nair (Sector 12)", mood: "😢 Scared", score: 78, dispatched: true },
+        { id: 105, name: "David Kim (Community Hall)", mood: "🙂 Calm", score: 20, dispatched: false },
+        { id: 106, name: "Ananya Gupta (Camp 3)", mood: "😭 Terrified", score: 92, dispatched: false },
+        { id: 107, name: "Marcus Vance (Medical Post)", mood: "😐 Tired", score: 45, dispatched: false },
+        { id: 108, name: "Fatima Al-Sayed (Block B)", mood: "🙂 Safe", score: 15, dispatched: false }
+    ];
+
+    // 1. Audio Synthesizer
+    function playEmergencyAlertSound() {
+        if (!soundEnabled) return;
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.4);
+
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.4);
+        } catch (e) {
+            console.log("Audio waiting for user click.");
+        }
+    }
+
+    function toggleAudioAlerts() {
+        soundEnabled = !soundEnabled;
+        const btn = document.getElementById('audio-toggle-btn');
+        if (soundEnabled) {
+            btn.className = "btn btn-sm btn-outline-warning";
+            btn.innerHTML = '<i class="bi bi-volume-up-fill me-1"></i> Sound: ON';
+            playEmergencyAlertSound();
+        } else {
+            btn.className = "btn btn-sm btn-outline-secondary";
+            btn.innerHTML = '<i class="bi bi-volume-mute-fill me-1"></i> Sound: OFF';
+        }
+    }
+
+    // 2. DAY 6: Theme Switcher (Dark / Light Mode)
+    function toggleTheme() {
+        isDarkMode = !isDarkMode;
+        const html = document.documentElement;
+        const themeBtn = document.getElementById('theme-btn');
+
+        if (isDarkMode) {
+            html.setAttribute('data-bs-theme', 'dark');
+            themeBtn.innerHTML = '<i class="bi bi-sun-fill text-warning"></i>';
+        } else {
+            html.setAttribute('data-bs-theme', 'light');
+            themeBtn.innerHTML = '<i class="bi bi-moon-stars-fill"></i>';
+        }
+    }
+
+    // 3. DAY 6: Demo Mode Switcher
+    function toggleDemoMode() {
+        isDemoMode = !isDemoMode;
+        const btn = document.getElementById('demo-mode-btn');
+
+        if (isDemoMode) {
+            btn.className = "btn btn-sm btn-warning text-dark fw-bold";
+            btn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Demo Mode: ON';
+            allVictims = demoFallbackVictims;
+            updateDashboardUI(allVictims);
+        } else {
+            btn.className = "btn btn-sm btn-outline-light";
+            btn.innerHTML = '<i class="bi bi-play-circle me-1"></i> Demo Mode: OFF';
+            fetchDashboardData();
+        }
+    }
+
+    // 4. DAY 6: Client-Side CSV Incident Export
+    function exportIncidentReportCSV() {
+        if (!allVictims || allVictims.length === 0) {
+            alert("No data available to export.");
+            return;
+        }
+
+        let csvContent = "Victim ID,Name,Latest Mood,Distress Score,Risk Tier,Dispatch Status\n";
+        allVictims.forEach(v => {
+            let riskTier = v.score > 70 ? "HIGH RISK" : (v.score > 40 ? "MODERATE" : "STABLE");
+            let dispatchStatus = v.dispatched ? "Dispatched" : "Pending Action";
+            csvContent += `"${v.id}","${v.name}","${v.mood || ''}","${v.score}","${riskTier}","${dispatchStatus}"\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `crisis_incident_report_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    // 5. Chart.js Initialization
+    function initCharts() {
+        const ctxTrend = document.getElementById('trendChart').getContext('2d');
+        trendChartInstance = new Chart(ctxTrend, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Distress Score',
+                    data: [],
+                    borderColor: '#dc3545',
+                    backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                    tension: 0.3,
+                    fill: true,
+                    pointRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { min: 0, max: 100, title: { display: false } },
+                    x: { ticks: { font: { size: 10 } } }
+                }
+            }
+        });
+
+        const ctxDoughnut = document.getElementById('doughnutChart').getContext('2d');
+        doughnutChartInstance = new Chart(ctxDoughnut, {
+            type: 'doughnut',
+            data: {
+                labels: ['High Risk (>70)', 'Moderate (41-70)', 'Stable (0-40)'],
+                datasets: [{
+                    data: [0, 0, 0],
+                    backgroundColor: ['#dc3545', '#ffc107', '#198754'],
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } }
+                }
+            }
+        });
+    }
+
+    // 6. Data Fetching & UI Sync
+    async function fetchDashboardData() {
+        if (isDemoMode) return;
+
+        const spinner = document.getElementById('loading-spinner');
+        const offlineBanner = document.getElementById('offline-banner');
+        spinner.classList.remove('d-none');
+
+        try {
+            const response = await fetch('/api/victims');
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            
+            allVictims = await response.json();
+            offlineBanner.classList.add('d-none');
+            secondsSinceLastSync = 0;
+
+            updateDashboardUI(allVictims);
+        } catch (error) {
+            console.error('Sync failed:', error);
+            offlineBanner.classList.remove('d-none');
+        } finally {
+            spinner.classList.add('d-none');
+        }
+    }
+
+    function updateDashboardUI(victims) {
+        updateSummaryMetrics(victims);
+        updateDoughnutChart(victims);
+        applyFilters();
+        checkAlerts(victims);
+        renderAlertsTable(victims);
+
+        if (!selectedVictimId && victims.length > 0) {
+            loadVictimTrend(victims[0].id, victims[0].name, victims[0].score);
+        }
+    }
+
+    function updateDoughnutChart(victims) {
+        const high = victims.filter(v => v.score > 70).length;
+        const med = victims.filter(v => v.score > 40 && v.score <= 70).length;
+        const low = victims.filter(v => v.score <= 40).length;
+
+        doughnutChartInstance.data.datasets[0].data = [high, med, low];
+        doughnutChartInstance.update();
+    }
+
+    async function loadVictimTrend(victimId, victimName, currentScore) {
+        selectedVictimId = victimId;
+        highlightSelectedRow(victimId);
+        document.getElementById('chart-victim-label').innerText = victimName;
+
+        if (isDemoMode) {
+            const mockTrend = [35, 45, 60, 75, currentScore];
+            trendChartInstance.data.labels = ["Check-in 1", "Check-in 2", "Check-in 3", "Check-in 4", "Latest"];
+            trendChartInstance.data.datasets[0].data = mockTrend;
+            trendChartInstance.update();
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/victim/${victimId}/trend`);
+            const trendData = await response.json();
+
+            let lineColor = currentScore > 70 ? '#dc3545' : (currentScore > 40 ? '#ffc107' : '#198754');
+            let bgColor = currentScore > 70 ? 'rgba(220, 53, 69, 0.15)' : (currentScore > 40 ? 'rgba(255, 193, 7, 0.15)' : 'rgba(25, 135, 84, 0.15)');
+
+            trendChartInstance.data.labels = trendData.labels;
+            trendChartInstance.data.datasets[0].data = trendData.scores;
+            trendChartInstance.data.datasets[0].borderColor = lineColor;
+            trendChartInstance.data.datasets[0].backgroundColor = bgColor;
+            trendChartInstance.update();
+        } catch (error) {
+            console.error(`Failed to load trend for victim ${victimId}:`, error);
+        }
+    }
+
+    // 7. Modals: Chat History & IVRS Call
+    async function openHistoryModal(victimId) {
+        const victim = allVictims.find(v => v.id === victimId);
+        if (!victim) return;
+
+        activeVictimForCall = victim;
+        document.getElementById('modal-victim-name').innerText = victim.name;
+        document.getElementById('modal-victim-id').innerText = `Victim ID: #${victim.id}`;
+        
+        const badge = document.getElementById('modal-victim-badge');
+        badge.innerText = `Distress Score: ${victim.score}/100`;
+        badge.className = `badge ${victim.score > 70 ? 'bg-danger' : (victim.score > 40 ? 'bg-warning text-dark' : 'bg-success')}`;
+
+        const container = document.getElementById('modal-chat-container');
+        container.innerHTML = `<div class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm me-2"></span>Loading logs...</div>`;
+
+        const modal = new bootstrap.Modal(document.getElementById('historyModal'));
+        modal.show();
+
+        if (isDemoMode) {
+            container.innerHTML = `
+                <div class="chat-bubble chat-user">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="fw-bold">${victim.name}</small>
+                        <span class="badge bg-danger font-monospace" style="font-size:0.7rem;">NEGATIVE (${victim.score}/100)</span>
+                    </div>
+                    <div>"I feel very scared and alone in this shelter."</div>
+                    <div class="text-muted text-end" style="font-size:0.7rem;">10:15 AM</div>
+                </div>
+                <div class="chat-bubble chat-bot">
+                    <div class="fw-bold small text-primary mb-1">Crisis Assistant</div>
+                    <div>"I am right here with you. Help is on the way. A responder is reviewing your location."</div>
+                </div>
+            `;
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/victim/${victimId}/history`);
+            const history = await response.json();
+
+            container.innerHTML = '';
+            if (history.length === 0) {
+                container.innerHTML = `<div class="text-center text-muted py-3">No message logs recorded yet.</div>`;
+                return;
+            }
+
+            history.forEach(item => {
+                const userBubble = document.createElement('div');
+                userBubble.className = 'chat-bubble chat-user';
+                userBubble.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="fw-bold">${victim.name}</small>
+                        <span class="badge ${item.sentiment === 'NEGATIVE' ? 'bg-danger' : 'bg-success'} font-monospace" style="font-size:0.7rem;">
+                            ${item.sentiment} (${item.score}/100)
+                        </span>
+                    </div>
+                    <div>${item.user_message}</div>
+                    <div class="text-muted text-end" style="font-size:0.7rem;">${item.timestamp || 'Recent'}</div>
+                `;
+                container.appendChild(userBubble);
+
+                if (item.bot_reply) {
+                    const botBubble = document.createElement('div');
+                    botBubble.className = 'chat-bubble chat-bot';
+                    botBubble.innerHTML = `
+                        <div class="fw-bold small text-primary mb-1">Crisis Assistant</div>
+                        <div>${item.bot_reply}</div>
+                    `;
+                    container.appendChild(botBubble);
+                }
+            });
+        } catch (error) {
+            container.innerHTML = `<div class="text-danger text-center py-3">Error fetching chat logs.</div>`;
+        }
+    }
+
+    function initiateEmergencyCall() {
+        const historyModalEl = document.getElementById('historyModal');
+        const historyModal = bootstrap.Modal.getInstance(historyModalEl);
+        if (historyModal) historyModal.hide();
+
+        const callModal = new bootstrap.Modal(document.getElementById('callModal'));
+        callModal.show();
+
+        const title = document.getElementById('call-title');
+        const icon = document.getElementById('call-icon');
+        const stepText = document.getElementById('call-step-text');
+        const transcript = document.getElementById('call-transcript-box');
+
+        title.innerText = `Calling ${activeVictimForCall ? activeVictimForCall.name : 'Victim'}...`;
+        icon.className = "bi bi-telephone-outbound-fill text-danger fs-1 call-pulsing-icon";
+        stepText.innerText = "Dialing emergency contact number...";
+        transcript.innerHTML = `<em>Initiating secure telephony bridge...</em>`;
+
+        setTimeout(() => {
+            icon.className = "bi bi-telephone-fill text-success fs-1";
+            title.innerText = "Call Connected (00:04)";
+            stepText.innerText = "IVRS Voice Prompt Active";
+            transcript.innerHTML = `
+                <div class="p-2 border rounded bg-body">
+                    <strong class="text-success"><i class="bi bi-volume-up-fill me-1"></i>Automated IVRS Speaking:</strong><br>
+                    <em>"Hello, this is the Support Team. We noticed you reported elevated distress. Press 1 to connect with a live counselor, or Press 2 to dispatch medical aid."</em>
+                </div>
+            `;
+        }, 2000);
+
+        setTimeout(() => {
+            transcript.innerHTML += `
+                <div class="mt-2 p-2 border rounded bg-body text-primary">
+                    <strong><i class="bi bi-phone me-1"></i>Victim Action:</strong> Keypad Tone: <strong>Pressed '1' (Counselor Request)</strong>
+                </div>
+            `;
+            stepText.innerText = "Routing call to Priority Crisis Responder queue...";
+        }, 4500);
+    }
+
+    function resetCallSimulation() {
+        document.getElementById('call-step-text').innerText = "Connecting...";
+        document.getElementById('call-transcript-box').innerHTML = "<em>Awaiting connection...</em>";
+    }
+
+    // 8. Incident Table & Aid Dispatch
+    function renderAlertsTable(victims) {
+        const highRisk = victims.filter(v => v.score > 70);
+        const tbody = document.getElementById('alerts-table-body');
+        document.getElementById('tab-alert-badge').innerText = highRisk.length;
+
+        tbody.innerHTML = '';
+        if (highRisk.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-4">No active emergency alerts. All monitored individuals are stable.</td></tr>`;
+            return;
+        }
+
+        highRisk.forEach((v) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>#INC-${1000 + v.id}</strong></td>
+                <td><strong>${v.name}</strong> (#${v.id})</td>
+                <td><span class="badge bg-danger fs-6">${v.score} / 100</span></td>
+                <td><span class="badge ${v.dispatched ? 'bg-success' : 'bg-warning text-dark'}" id="status-badge-${v.id}">
+                    ${v.dispatched ? 'Team En Route' : 'Action Required'}
+                </span></td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-primary" onclick="openHistoryModal(${v.id})">
+                            <i class="bi bi-eye-fill me-1"></i> Log
+                        </button>
+                        <button class="btn ${v.dispatched ? 'btn-secondary disabled' : 'btn-success'}" id="dispatch-btn-${v.id}" onclick="dispatchRescueTeam(${v.id})">
+                            <i class="bi bi-send-check-fill me-1"></i> ${v.dispatched ? 'Dispatched' : 'Dispatch Aid'}
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function dispatchRescueTeam(victimId) {
+        const btn = document.getElementById(`dispatch-btn-${victimId}`);
+        const badge = document.getElementById(`status-badge-${victimId}`);
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Dispatching...';
+
+        if (isDemoMode) {
+            btn.className = "btn btn-secondary disabled";
+            btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Dispatched';
+            badge.className = "badge bg-success";
+            badge.innerText = "Team En Route";
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/alerts/dispatch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ victim_id: victimId })
+            });
+
+            if (response.ok) {
+                btn.className = "btn btn-secondary disabled";
+                btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Dispatched';
+                badge.className = "badge bg-success";
+                badge.innerText = "Team En Route";
+            }
+        } catch (error) {
+            alert("Error sending dispatch request to backend.");
+            btn.disabled = false;
+            btn.innerHTML = 'Dispatch Aid';
+        }
+    }
+
+    // 9. Search & Filter
+    function applyFilters() {
+        const query = document.getElementById('search-input').value.toLowerCase();
+        const riskFilter = document.getElementById('risk-filter').value;
+
+        const filtered = allVictims.filter(v => {
+            const matchesSearch = v.name.toLowerCase().includes(query) || v.id.toString().includes(query);
+            let matchesRisk = true;
+            if (riskFilter === 'high') matchesRisk = v.score > 70;
+            else if (riskFilter === 'medium') matchesRisk = v.score > 40 && v.score <= 70;
+            else if (riskFilter === 'low') matchesRisk = v.score <= 40;
+            return matchesSearch && matchesRisk;
+        });
+
+        renderTable(filtered);
+    }
+
+    function renderTable(victims) {
+        const tbody = document.getElementById('victim-table-body');
+        tbody.innerHTML = '';
+
+        if (victims.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">No matching records found.</td></tr>`;
+            return;
+        }
+
+        victims.forEach(v => {
+            let badgeClass = v.score > 70 ? 'risk-high' : (v.score > 40 ? 'risk-medium' : 'risk-low');
+            let badgeText = v.score > 70 ? 'High Risk' : (v.score > 40 ? 'Moderate' : 'Low Risk');
+
+            const tr = document.createElement('tr');
+            tr.id = `victim-row-${v.id}`;
+            if (v.id === selectedVictimId) tr.classList.add('selected-row');
+
+            tr.innerHTML = `
+                <td class="text-muted">#${v.id}</td>
+                <td class="fw-semibold">${v.name}</td>
+                <td>${v.mood || 'N/A'}</td>
+                <td><strong>${v.score}</strong> / 100</td>
+                <td><span class="risk-badge ${badgeClass}">${badgeText}</span></td>
+                <td>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary" title="View Graph" onclick="loadVictimTrend(${v.id}, '${v.name}', ${v.score})">
+                            <i class="bi bi-graph-up"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary" title="View Chat & Sentiment" onclick="openHistoryModal(${v.id})">
+                            <i class="bi bi-chat-dots-fill"></i> Log
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function updateSummaryMetrics(victims) {
+        const total = victims.length;
+        const high = victims.filter(v => v.score > 70).length;
+        const med = victims.filter(v => v.score > 40 && v.score <= 70).length;
+        const low = victims.filter(v => v.score <= 40).length;
+
+        document.getElementById('stat-total').innerText = total;
+        document.getElementById('stat-high').innerText = high;
+        document.getElementById('stat-med').innerText = med;
+        document.getElementById('stat-low').innerText = low;
+        document.getElementById('nav-alert-badge').innerText = `${high} Alerts`;
+
+        if (high > lastKnownAlertCount) {
+            playEmergencyAlertSound();
+        }
+        lastKnownAlertCount = high;
+    }
+
+    function checkAlerts(victims) {
+        const highRiskVictims = victims.filter(v => v.score > 70);
+        const container = document.getElementById('alert-banner-container');
+
+        if (highRiskVictims.length > 0) {
+            const first = highRiskVictims[0];
+            container.innerHTML = `
+                <div class="alert alert-danger alert-dismissible fade show d-flex align-items-center mb-4 shadow-sm" role="alert">
+                    <i class="bi bi-exclamation-triangle-fill fs-3 me-3"></i>
+                    <div class="flex-grow-1">
+                        <strong>Critical Distress Alert:</strong> Victim <strong>${first.name} (#${first.id})</strong> scored <strong>${first.score}/100</strong>.
+                    </div>
+                    <button class="btn btn-sm btn-danger me-2" onclick="openHistoryModal(${first.id})">Inspect Victim</button>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+        } else {
+            container.innerHTML = '';
+        }
+    }
+
+    function highlightSelectedRow(victimId) {
+        document.querySelectorAll('#victim-table-body tr').forEach(r => r.classList.remove('selected-row'));
+        const row = document.getElementById(`victim-row-${victimId}`);
+        if (row) row.classList.add('selected-row');
+    }
+
+    // 10. Startup Lifecycle
+    document.addEventListener('DOMContentLoaded', () => {
+        initCharts();
+        fetchDashboardData();
+        setInterval(fetchDashboardData, 5000);
+        setInterval(() => {
+            secondsSinceLastSync++;
+            document.getElementById('sync-status-text').innerText = `Live (${secondsSinceLastSync}s ago)`;
+        }, 1000);
+    });
+</script>
+</body>
+</html>
