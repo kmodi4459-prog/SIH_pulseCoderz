@@ -40,8 +40,21 @@ init_db()
 # ---------------------------------------------------------
 # 3. AI SCORING LOGIC
 # ---------------------------------------------------------
+import re # Add this at the very top of app.py with the other imports
+
+# ---------------------------------------------------------
+# 3. AI SCORING LOGIC (Optimized)
+# ---------------------------------------------------------
 def calculate_distress_score(text):
-    """Generates a 0-100 distress score based on sentiment and keywords."""
+    """Generates a 0-100 distress score with robust edge-case handling."""
+    # 1. Null check and whitespace trimming to prevent crashes
+    if not text or not text.strip():
+        return 0
+        
+    # 2. Token limit protection (slice to safely stay under DistilBERT limits)
+    text = text[:1500]
+    
+    # Run Hugging Face pipeline
     result = sentiment_pipeline(text)[0]
     confidence = result['score']
     
@@ -51,11 +64,24 @@ def calculate_distress_score(text):
     else:
         base_score = int((1.0 - confidence) * 100)
         
-    # Keyword bump for severe distress
-    high_risk_words = ['scared', 'kill', 'hurt', 'threat', 'alone', 'terrified', 'die']
-    if any(word in text.lower() for word in high_risk_words):
-        base_score = min(100, base_score + 25) # Cap at 100
-        
+    # 3. Clean punctuation and tokenize for accurate lookups
+    clean_text = re.sub(r'[^\w\s]', '', text.lower())
+    words = clean_text.split()
+    
+    # Using a Python Set for O(1) time complexity lookups
+    high_risk_set = {'scared', 'kill', 'hurt', 'threat', 'alone', 'terrified', 'die'}
+    
+    # 4. Negation check and keyword bump
+    for i, word in enumerate(words):
+        if word in high_risk_set:
+            # Check if the preceding word negates the threat (e.g., "not scared")
+            if i > 0 and words[i-1] in {'not', 'no', 'never', 'isnt'}:
+                continue # Skip the bump for this word
+            
+            # Apply the bump and exit the loop early for maximum efficiency
+            base_score = min(100, base_score + 25)
+            break 
+            
     return base_score
 
 # ---------------------------------------------------------
