@@ -19,3 +19,16 @@
 ```bash
 npm install
 node server.js
+# PS94 - AI Mental Health Monitoring Backend (Database, Security & Alerts Module)
+
+An enterprise-grade, privacy-focused backend platform built to monitor, analyze, and prioritize distress signals for victim support and official intervention.
+
+Integrated with real-time risk evaluation, role-based official authentication, automated alert triggers, an in-memory Max-Heap Priority Queue for dynamic case prioritization, and detailed access logging for compliance.
+
+---
+
+## Setup & Installation
+
+1. **Install Dependencies**:
+   ```bash
+   npm install
