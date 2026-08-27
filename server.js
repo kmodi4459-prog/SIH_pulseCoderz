@@ -1,4 +1,6 @@
 const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const { connectDB } = require("./db");
@@ -8,17 +10,24 @@ const { PriorityQueue, checkThresholdAndTrend, THRESHOLDS } = require("./priorit
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Application Middleware
 app.use(cors());
 app.use(express.json());
 
-// Initialize Priority Queue & DB Connection
+// Wrap the Express app in a plain HTTP server so Socket.io can attach to it
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: "*" } // for hackathon demo; restrict this to your frontend's URL in production
+});
+
+io.on("connection", (socket) => {
+  console.log("Dashboard connected:", socket.id);
+  socket.on("disconnect", () => console.log("Dashboard disconnected:", socket.id));
+});
+
 const casePriorityQueue = new PriorityQueue();
 connectDB();
 
-/**
- * Health Check & Status Endpoints
- */
+// 1. HOME + TEST
 app.get("/", (req, res) => {
   res.send("Mental Health Monitoring Server is Running");
 });
@@ -27,9 +36,7 @@ app.get("/test", (req, res) => {
   res.json({ success: true, message: "API is working" });
 });
 
-/**
- * Official Management: Registration & Authentication (Role-Based Access)
- */
+// 2. OFFICIAL REGISTRATION + LOGIN (role-based access)
 app.post("/official/register", async (req, res) => {
   try {
     const { officialId, name, role, district, state, password } = req.body;
@@ -67,14 +74,15 @@ app.post("/official/login", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid officialId or password" });
     }
 
-    // Returns official scope directly for prototype demonstration
+    // Note: for the hackathon prototype we return the official's role/scope
+    // directly. In a production system this would be a signed JWT instead.
     res.json({
       success: true,
       message: "Login successful",
       official: {
         officialId: official.officialId,
         name: official.name,
-        role: official.role,
+        role: official.role,       // counsellor / district_official / state_official / national_official
         district: official.district,
         state: official.state
       }
@@ -84,9 +92,7 @@ app.post("/official/login", async (req, res) => {
   }
 });
 
-/**
- * Victim Management: Registration & Profile Access (PII Hashed)
- */
+// 3. VICTIM REGISTRATION (PII hashed, saved to DB)
 app.post("/victim", async (req, res) => {
   try {
     const { victimId, name, contact, caseType, district, state, registeredVia } = req.body;
@@ -98,13 +104,10 @@ app.post("/victim", async (req, res) => {
     const contactHash = contact ? await bcrypt.hash(contact, 10) : undefined;
 
     const victim = await Victim.create({
-      victimId,
-      nameHash,
-      contactHash,
+      victimId, nameHash, contactHash,
       caseType: caseType || "witness_intimidation",
       registeredVia: registeredVia || "Chatbot",
-      district,
-      state: state || "Unknown"
+      district, state: state || "Unknown"
     });
 
     res.status(201).json({
@@ -117,6 +120,7 @@ app.post("/victim", async (req, res) => {
   }
 });
 
+// GET a victim profile — requires officialId in query so we can log who accessed it
 app.get("/victim/:victimId", async (req, res) => {
   try {
     const victim = await Victim.findOne({ victimId: req.params.victimId });
@@ -147,9 +151,7 @@ app.get("/victim/:victimId", async (req, res) => {
   }
 });
 
-/**
- * Distress Analytics: Score Calculations, Automated Alerts & Queue Updates
- */
+// 4. DISTRESS SCORE — save, check threshold, auto-alert, update priority queue
 app.post("/distress-score", async (req, res) => {
   try {
     const { victimId, score, contributingFactors } = req.body;
@@ -168,11 +170,8 @@ app.post("/distress-score", async (req, res) => {
 
     let alertCreated = false;
     if (result.shouldAlert) {
-      await Alert.create({
-        victimId,
-        triggeredScore: result.latestScore,
-        riskLevel: result.riskLevel,
-        status: "open"
+      const newAlert = await Alert.create({
+        victimId, triggeredScore: result.latestScore, riskLevel: result.riskLevel, status: "open"
       });
 
       if (casePriorityQueue.heap.some(item => item.victimId === victimId)) {
@@ -181,11 +180,20 @@ app.post("/distress-score", async (req, res) => {
         casePriorityQueue.insert({ victimId, score: result.latestScore, riskLevel: result.riskLevel });
       }
       alertCreated = true;
+
+      // Push this alert to every connected dashboard instantly
+      io.emit("newAlert", {
+        alertId: newAlert._id,
+        victimId,
+        riskLevel: result.riskLevel,
+        score: result.latestScore,
+        trend: result.trend,
+        createdAt: newAlert.createdAt
+      });
     }
 
     res.json({
-      success: true,
-      victimId,
+      success: true, victimId,
       distressScore: result.latestScore,
       riskLevel: result.riskLevel || "LOW",
       trend: result.trend,
@@ -196,6 +204,7 @@ app.post("/distress-score", async (req, res) => {
   }
 });
 
+// GET full score history — logs access if officialId is passed
 app.get("/distress-score/:victimId", async (req, res) => {
   try {
     const history = await DistressScore.find({ victimId: req.params.victimId })
@@ -217,9 +226,7 @@ app.get("/distress-score/:victimId", async (req, res) => {
   }
 });
 
-/**
- * Alert Management: Fetch Active Alerts & Update Resolution Status
- */
+// 5. ALERTS — list + acknowledge/resolve
 app.get("/alerts", async (req, res) => {
   try {
     const { status, riskLevel, officialId } = req.query;
@@ -230,6 +237,7 @@ app.get("/alerts", async (req, res) => {
     const alerts = await Alert.find(filter).sort({ createdAt: -1 });
 
     if (officialId) {
+      // log once per bulk view rather than per-alert
       for (const alert of alerts) {
         await AccessLog.create({ officialId, victimId: alert.victimId, action: "view_alert" });
       }
@@ -262,17 +270,13 @@ app.patch("/alerts/:alertId", async (req, res) => {
   }
 });
 
-/**
- * Real-Time Priority Queue: Fetch Top Prioritized Distress Cases
- */
+// 6. PRIORITY CASES
 app.get("/priority-cases", (req, res) => {
   const n = parseInt(req.query.n) || 5;
   res.json({ success: true, topCases: casePriorityQueue.getTopN(n) });
 });
 
-/**
- * Audit Logging & Compliance: Access Tracking
- */
+// 7. ACCESS LOG — see who viewed what (transparency/audit trail)
 app.get("/access-logs", async (req, res) => {
   try {
     const { victimId, officialId } = req.query;
@@ -287,10 +291,9 @@ app.get("/access-logs", async (req, res) => {
   }
 });
 
-/**
- * HTTP Server Initialization
- */
-app.listen(PORT, () => {
+// SERVER START
+httpServer.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Socket.io ready for real-time alerts`);
   console.log(`Alert thresholds -> amber: ${THRESHOLDS.amber}, red: ${THRESHOLDS.red}`);
 });
