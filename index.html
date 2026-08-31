@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Help Chat</title>
+    <style>
+        :root {
+            --bg-color: #f4f7f6;
+            --chat-bg: #ffffff;
+            --user-msg: #007bff;
+            --bot-msg: #e9ecef;
+            --text-dark: #333;
+            --text-light: #fff;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .chat-container {
+            width: 100%;
+            max-width: 450px;
+            background-color: var(--chat-bg);
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            height: 80vh;
+            overflow: hidden;
+        }
+        .chat-header {
+            background-color: #dc3545; /* Red to indicate SOS/Help context, can be changed */
+            color: var(--text-light);
+            padding: 20px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 20px;
+            line-height: 1.4;
+            font-size: 0.95rem;
+            word-wrap: break-word;
+        }
+        .message.user {
+            background-color: var(--user-msg);
+            color: var(--text-light);
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+        .message.bot {
+            background-color: var(--bot-msg);
+            color: var(--text-dark);
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+        .input-area {
+            display: flex;
+            padding: 15px;
+            background-color: var(--chat-bg);
+            border-top: 1px solid #ddd;
+        }
+        #message-input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 24px;
+            outline: none;
+            font-size: 1rem;
+        }
+        #message-input:focus {
+            border-color: var(--user-msg);
+        }
+        #send-btn {
+            background-color: var(--user-msg);
+            color: var(--text-light);
+            border: none;
+            padding: 0 20px;
+            margin-left: 10px;
+            border-radius: 24px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+        #send-btn:hover {
+            background-color: #0056b3;
+        }
+        /* Small loading indicator */
+        .typing-indicator {
+            display: none;
+            align-self: flex-start;
+            color: #888;
+            font-size: 0.85rem;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="chat-container">
+        <div class="chat-header">
+            Secure Support Line
+        </div>
+        
+        <div class="chat-messages" id="chat-messages">
+            <div class="message bot">Hello. I am here to listen. You are in a safe space. How can I help you today?</div>
+        </div>
+        <div class="typing-indicator" id="typing-indicator">Processing...</div>
+        
+        <div class="input-area">
+            <input type="text" id="message-input" placeholder="Type your message..." autocomplete="off" onkeypress="handleKeyPress(event)">
+            <button id="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        // 1. UI Helper Functions
+        const chatMessages = document.getElementById('chat-messages');
+        const messageInput = document.getElementById('message-input');
+        const typingIndicator = document.getElementById('typing-indicator');
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function appendMessage(sender, text) {
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('message', sender);
+            msgDiv.innerText = text;
+            chatMessages.appendChild(msgDiv);
+            
+            // Auto-scroll to bottom
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // 2. Core API Integration (Connecting to your AI Backend)
+        async function sendMessage() {
+            const text = messageInput.value.trim();
+            if (!text) return;
+
+            // Show user message on screen and clear input
+            appendMessage('user', text);
+            messageInput.value = '';
+            
+            // Show loading text
+            typingIndicator.style.display = 'block';
+
+            try {
+                // Send POST request to Member 4's Flask server
+                const response = await fetch('http://127.0.0.1:5000/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        message: text,
+                        victim_id: 1 // Default ID for the hackathon prototype
+                    })
+                });
+
+                const data = await response.json();
+                
+                // Hide loading text
+                typingIndicator.style.display = 'none';
+
+                if (response.ok) {
+                    // Display the bot's reply from the backend
+                    appendMessage('bot', data.reply);
+                    
+                    // For Hackathon Demo: Log the AI score in the browser console 
+                    // so judges can see it working under the hood
+                    console.log(`%c[AI Engine] Distress Score: ${data.distress_score}/100 | Alert Triggered: ${data.alert}`, 'color: #dc3545; font-weight: bold;');
+                } else {
+                    appendMessage('bot', 'System error: Could not process the message.');
+                    console.error("Backend Error:", data.error);
+                }
+
+            } catch (error) {
+                typingIndicator.style.display = 'none';
+                appendMessage('bot', 'Connection error. Make sure the Flask server is running.');
+                console.error("Fetch Error:", error);
+            }
+        }
+    </script>
+</body>
+</html>
