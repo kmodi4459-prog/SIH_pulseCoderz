@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IVRS Check-in — Simulation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#EEF2ED;
+    --panel:#FFFFFF;
+    --ink:#23322F;
+    --ink-soft:#5C6B66;
+    --teal:#2F6F62;
+    --teal-soft:#DCEAE6;
+    --gold:#C99A44;
+    --gold-soft:#F5E9D2;
+    --line:#DCE3DE;
+    --font-display:'Fraunces', Georgia, 'Iowan Old Style', serif;
+    --font-body:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:var(--bg);
+    font-family:var(--font-body);
+    color:var(--ink);
+    padding:28px 16px;
+  }
+  .phone-shell{
+    width:100%;
+    max-width:420px;
+    background:var(--panel);
+    border-radius:22px;
+    box-shadow:0 18px 40px -20px rgba(35,50,47,0.35), 0 2px 8px rgba(35,50,47,0.08);
+    padding:26px 24px 22px;
+  }
+  header{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    margin-bottom:6px;
+  }
+  .eyebrow{
+    font-size:0.68rem;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--ink-soft);
+    font-weight:600;
+    margin:0 0 4px;
+  }
+  h1{
+    font-family:var(--font-display);
+    font-size:1.35rem;
+    font-weight:600;
+    margin:0;
+    line-height:1.25;
+  }
+  .restart-link{
+    background:none;
+    border:none;
+    color:var(--ink-soft);
+    font-family:var(--font-body);
+    font-size:0.74rem;
+    cursor:pointer;
+    padding:4px 2px;
+    white-space:nowrap;
+    text-decoration:underline;
+    text-underline-offset:2px;
+  }
+  .restart-link:hover, .restart-link:focus-visible{ color:var(--teal); }
+
+  .call-stage{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:22px 0 18px;
+  }
+  .orb-wrap{
+    position:relative;
+    width:96px;
+    height:96px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .orb{
+    width:52px;
+    height:52px;
+    border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #3E8778, var(--teal));
+    box-shadow:0 6px 18px -4px rgba(47,111,98,0.55);
+    z-index:2;
+  }
+  .ring{
+    position:absolute;
+    width:52px;
+    height:52px;
+    border-radius:50%;
+    border:1.5px solid var(--teal);
+    opacity:0;
+  }
+  .orb-wrap.speaking .orb{ animation:orb-breathe 1.2s ease-in-out infinite; }
+  .orb-wrap.speaking .ring{ animation:pulse-ring 1.5s ease-out infinite; }
+  .orb-wrap.speaking .ring.r2{ animation-delay:0.5s; }
+  @keyframes orb-breathe{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.08);} }
+  @keyframes pulse-ring{
+    0%{ transform:scale(0.8); opacity:0.55; }
+    100%{ transform:scale(1.7); opacity:0; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .orb-wrap.speaking .orb, .orb-wrap.speaking .ring{ animation:none; }
+  }
+  .call-status{
+    margin-top:14px;
+    font-size:0.82rem;
+    color:var(--ink-soft);
+    letter-spacing:0.01em;
+  }
+  .call-timer{
+    margin-top:2px;
+    font-size:1.05rem;
+    font-weight:600;
+    font-variant-numeric:tabular-nums;
+    color:var(--ink);
+  }
+
+  .transcript{
+    background:var(--bg);
+    border-radius:14px;
+    padding:14px;
+    max-height:230px;
+    overflow-y:auto;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin-bottom:14px;
+  }
+  .bubble{
+    padding:10px 13px;
+    border-radius:14px;
+    font-size:0.9rem;
+    line-height:1.42;
+    max-width:86%;
+  }
+  .bubble--system{
+    align-self:flex-start;
+    background:var(--panel);
+    border:1px solid var(--line);
+    color:var(--ink);
+    border-bottom-left-radius:4px;
+  }
+  .bubble--user{
+    align-self:flex-end;
+    background:var(--teal);
+    color:#fff;
+    border-bottom-right-radius:4px;
+  }
+
+  .options{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    min-height:4px;
+  }
+  .key-btn{
+    display:flex;
+    align-items:center;
+    gap:11px;
+    width:100%;
+    padding:11px 13px;
+    border-radius:12px;
+    border:1px solid var(--line);
+    background:var(--panel);
+    cursor:pointer;
+    text-align:left;
+    font-family:var(--font-body);
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .key-btn:hover{ border-color:var(--teal); background:var(--teal-soft); }
+  .key-btn:focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
+  .key-num{
+    flex-shrink:0;
+    width:26px;
+    height:26px;
+    border-radius:50%;
+    background:var(--teal-soft);
+    color:var(--teal);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-weight:600;
+    font-size:0.82rem;
+  }
+  .key-label{
+    font-size:0.9rem;
+    font-weight:500;
+    color:var(--ink);
+  }
+
+  .summary-card{
+    margin-top:16px;
+    padding:16px;
+    border-radius:14px;
+    background:var(--gold-soft);
+    border:1px solid rgba(201,154,68,0.35);
+  }
+  .summary-title{
+    font-family:var(--font-display);
+    font-size:1rem;
+    font-weight:600;
+    margin:0 0 8px;
+  }
+  .summary-row{
+    display:flex;
+    justify-content:space-between;
+    font-size:0.82rem;
+    color:var(--ink-soft);
+    margin-bottom:3px;
+  }
+  .summary-row span:last-child{ color:var(--ink); font-weight:500; text-align:right; }
+  .restart-btn{
+    margin-top:12px;
+    width:100%;
+    padding:11px;
+    border-radius:12px;
+    border:none;
+    background:var(--teal);
+    color:#fff;
+    font-family:var(--font-body);
+    font-size:0.88rem;
+    font-weight:600;
+    cursor:pointer;
+  }
+  .restart-btn:hover{ background:#265d51; }
+
+  .footnote{
+    margin-top:16px;
+    font-size:0.7rem;
+    line-height:1.45;
+    color:var(--ink-soft);
+    text-align:center;
+  }
+</style>
+</head>
+<body>
+
+<div class="phone-shell">
+  <header>
+    <div>
+      <p class="eyebrow">Victim Support Helpline · IVRS</p>
+      <h1>Well-being Check-in</h1>
+    </div>
+    <button class="restart-link" id="headerRestart" type="button">Restart</button>
+  </header>
+
+  <div class="call-stage">
+    <div class="orb-wrap" id="orbWrap">
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+      <div class="orb"></div>
+    </div>
+    <div class="call-status" id="status">Connecting…</div>
+    <div class="call-timer" id="timer">00:00</div>
+  </div>
+
+  <div class="transcript" id="transcript" aria-live="polite"></div>
+  <div class="options" id="options"></div>
+
+  <div class="summary-card" id="summaryCard" hidden>
+    <p class="summary-title">Call summary</p>
+    <div class="summary-row"><span>Duration</span><span id="summaryDuration">00:00</span></div>
+    <div class="summary-row"><span>Outcome</span><span id="summaryOutcome">—</span></div>
+    <button class="restart-btn" id="restartBtn" type="button">Restart simulation</button>
+  </div>
+
+  <p class="footnote">Simulated call — no real telephony is connected. In the full system this would run over an IVRS/Twilio gateway and would update the victim's live distress score and dashboard.</p>
+</div>
+
+<script>
+  const flow = {
+    start: {
+      text: "Namaste. This is your scheduled well-being check-in call. This call is confidential and takes about a minute.",
+      options: [
+        { key: '1', label: 'Continue', next: 'mood' },
+        { key: '9', label: 'Not right now', next: 'declined' }
+      ]
+    },
+    mood: {
+      text: "Since we last spoke, how would you say you've been feeling?",
+      options: [
+        { key: '1', label: 'Doing okay', next: 'okay' },
+        { key: '2', label: 'Finding it hard', next: 'hard' },
+        { key: '3', label: 'Need to talk urgently', next: 'urgent' }
+      ]
+    },
+    okay: {
+      text: "Good to hear. Is there anything you'd like from your support team right now?",
+      options: [
+        { key: '1', label: 'No, all good', next: 'end_okay' },
+        { key: '2', label: 'Request a callback', next: 'end_callback' }
+      ]
+    },
+    hard: {
+      text: "Thank you for telling us. Would it help if a counsellor called you back?",
+      options: [
+        { key: '1', label: 'Yes, within a day', next: 'end_followup' },
+        { key: '2', label: 'Just note it for now', next: 'end_logged' }
+      ]
+    },
+    urgent: {
+      text: "We hear you, and this matters. Would you like to be connected now, or called back within the hour?",
+      options: [
+        { key: '1', label: 'Connect me now', next: 'end_priority' },
+        { key: '2', label: 'Call back within the hour', next: 'end_priority_callback' }
+      ]
+    },
+    declined: { text: "Understood. We'll check in again soon. Take care.", terminal: true, summary: 'Declined — no response logged' },
+    end_okay: { text: "Noted. Take care, and thank you for your time.", terminal: true, summary: 'Stable — no action needed' },
+    end_callback: { text: "A counsellor will call you back shortly. Take care.", terminal: true, summary: 'Callback requested — routine' },
+    end_followup: { text: "Your counsellor will reach out within 24 hours. You're not alone in this.", terminal: true, summary: 'Follow-up requested — counsellor notified' },
+    end_logged: { text: "Thank you for sharing. We're noting this and will keep checking in.", terminal: true, summary: 'Response logged — added to trend' },
+    end_priority: { text: "Connecting you now to a counsellor. Please stay on the line.", terminal: true, summary: 'Priority — counsellor connected live' },
+    end_priority_callback: { text: "We will call you back within the hour. If this is an emergency, please contact local authorities.", terminal: true, summary: 'Priority — urgent callback scheduled' }
+  };
+
+  const orbWrap = document.getElementById('orbWrap');
+  const statusEl = document.getElementById('status');
+  const timerEl = document.getElementById('timer');
+  const transcriptEl = document.getElementById('transcript');
+  const optionsEl = document.getElementById('options');
+  const summaryCard = document.getElementById('summaryCard');
+  const summaryDuration = document.getElementById('summaryDuration');
+  const summaryOutcome = document.getElementById('summaryOutcome');
+
+  let seconds = 0;
+  let timerInterval = null;
+
+  function formatTime(s){
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0');
+  }
+
+  function addTranscript(role, text){
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ' + (role === 'system' ? 'bubble--system' : 'bubble--user');
+    bubble.textContent = text;
+    transcriptEl.appendChild(bubble);
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  }
+
+  function renderOptions(options){
+    optionsEl.innerHTML = '';
+    options.forEach(opt => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'key-btn';
+      btn.innerHTML = '<span class="key-num">' + opt.key + '</span><span class="key-label">' + opt.label + '</span>';
+      btn.addEventListener('click', () => {
+        addTranscript('user', 'Pressed ' + opt.key + ' — ' + opt.label);
+        optionsEl.innerHTML = '';
+        goTo(opt.next);
+      });
+      optionsEl.appendChild(btn);
+    });
+  }
+
+  function goTo(id){
+    const node = flow[id];
+    orbWrap.classList.add('speaking');
+    statusEl.textContent = 'Speaking…';
+    addTranscript('system', node.text);
+    const speakTime = Math.min(2600, 900 + node.text.length * 16);
+    setTimeout(() => {
+      orbWrap.classList.remove('speaking');
+      if (node.terminal){
+        endCall(node);
+      } else {
+        statusEl.textContent = 'Listening for response';
+        renderOptions(node.options);
+      }
+    }, speakTime);
+  }
+
+  function endCall(node){
+    clearInterval(timerInterval);
+    statusEl.textContent = 'Call ended';
+    summaryDuration.textContent = formatTime(seconds);
+    summaryOutcome.textContent = node.summary;
+    summaryCard.hidden = false;
+  }
+
+  function startCall(){
+    transcriptEl.innerHTML = '';
+    optionsEl.innerHTML = '';
+    summaryCard.hidden = true;
+    seconds = 0;
+    timerEl.textContent = '00:00';
+    clearInterval(timerInterval);
+    statusEl.textContent = 'Connecting…';
+
+    setTimeout(() => {
+      statusEl.textContent = 'Connected';
+      timerInterval = setInterval(() => {
+        seconds++;
+        timerEl.textContent = formatTime(seconds);
+      }, 1000);
+      goTo('start');
+    }, 900);
+  }
+
+  document.getElementById('restartBtn').addEventListener('click', startCall);
+  document.getElementById('headerRestart').addEventListener('click', startCall);
+
+  startCall();
+</script>
+
+</body>
+</html>
