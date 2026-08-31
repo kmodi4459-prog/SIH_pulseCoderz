@@ -56,10 +56,15 @@ const distressScoreSchema = new mongoose.Schema({
 });
 
 // ---------- 4. ALERT ----------
+// models.js - Section 4 ALERT
 const alertSchema = new mongoose.Schema({
   victimId: { type: String, required: true, ref: 'Victim' },
   triggeredScore: { type: Number, required: true },
-  riskLevel: { type: String, enum: ['amber', 'red'], required: true }, // amber = medium, red = high
+  riskLevel: { 
+    type: String, 
+    enum: ['amber', 'red', 'high', 'HIGH', 'medium', 'LOW', 'CRITICAL'], 
+    required: true 
+  },
   status: { type: String, enum: ['open', 'acknowledged', 'resolved'], default: 'open' },
   assignedOfficialId: { type: String, ref: 'Official' },
   createdAt: { type: Date, default: Date.now }

@@ -1,14 +1,17 @@
+require('dotenv').config();
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const { connectDB } = require("./db");
-const { Victim, Interaction, DistressScore, Alert, Official, AccessLog } = require("./models");
+const { Victim, Interaction, DistressScore, Alert, Official, AccessLog, Intervention } = require("./models");
 const { PriorityQueue, checkThresholdAndTrend, THRESHOLDS } = require("./priorityQueue");
+const { encrypt, decrypt } = require("./encryption");
+const { sendAlertEmail } = require("./notifications");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json());
@@ -27,7 +30,9 @@ io.on("connection", (socket) => {
 const casePriorityQueue = new PriorityQueue();
 connectDB();
 
-// 1. HOME + TEST
+/**
+ * 1. HOME + TEST
+ */
 app.get("/", (req, res) => {
   res.send("Mental Health Monitoring Server is Running");
 });
@@ -36,27 +41,45 @@ app.get("/test", (req, res) => {
   res.json({ success: true, message: "API is working" });
 });
 
-// 2. OFFICIAL REGISTRATION + LOGIN (role-based access)
+/**
+ * 2. OFFICIAL REGISTRATION + LOGIN (role-based access)
+ */
+
+// Official Registration Route
 app.post("/official/register", async (req, res) => {
   try {
-    const { officialId, name, role, district, state, password } = req.body;
+    const { officialId, name, role, district, state, password, email } = req.body;
     if (!officialId || !name || !role || !password) {
       return res.status(400).json({ success: false, message: "officialId, name, role, and password are required" });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const official = await Official.create({ officialId, name, role, district, state, passwordHash });
+    const official = await Official.create({ 
+      officialId, 
+      name, 
+      role, 
+      district, 
+      state, 
+      passwordHash,
+      email // Email saved for email alerts
+    });
 
     res.status(201).json({
       success: true,
       message: "Official registered",
-      official: { officialId: official.officialId, name: official.name, role: official.role }
+      official: { 
+        officialId: official.officialId, 
+        name: official.name, 
+        role: official.role,
+        email: official.email 
+      }
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
+// Official Login Route
 app.post("/official/login", async (req, res) => {
   try {
     const { officialId, password } = req.body;
@@ -74,8 +97,6 @@ app.post("/official/login", async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid officialId or password" });
     }
 
-    // Note: for the hackathon prototype we return the official's role/scope
-    // directly. In a production system this would be a signed JWT instead.
     res.json({
       success: true,
       message: "Login successful",
@@ -92,7 +113,9 @@ app.post("/official/login", async (req, res) => {
   }
 });
 
-// 3. VICTIM REGISTRATION (PII hashed, saved to DB)
+/**
+ * 3. VICTIM REGISTRATION (PII hashed, saved to DB)
+ */
 app.post("/victim", async (req, res) => {
   try {
     const { victimId, name, contact, caseType, district, state, registeredVia } = req.body;
@@ -100,11 +123,11 @@ app.post("/victim", async (req, res) => {
       return res.status(400).json({ success: false, message: "victimId, name, and district are required fields" });
     }
 
-    const nameHash = await bcrypt.hash(name, 10);
-    const contactHash = contact ? await bcrypt.hash(contact, 10) : undefined;
+    const nameEncrypted = encrypt(name);
+    const contactEncrypted = contact ? encrypt(contact) : undefined;
 
     const victim = await Victim.create({
-      victimId, nameHash, contactHash,
+      victimId, nameEncrypted, contactEncrypted,
       caseType: caseType || "witness_intimidation",
       registeredVia: registeredVia || "Chatbot",
       district, state: state || "Unknown"
@@ -112,7 +135,7 @@ app.post("/victim", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Victim registered (PII stored as hash)",
+      message: "Victim registered (PII stored encrypted, not plain text)",
       victim: { victimId: victim.victimId, district: victim.district }
     });
   } catch (err) {
@@ -139,6 +162,7 @@ app.get("/victim/:victimId", async (req, res) => {
       success: true,
       victim: {
         victimId: victim.victimId,
+        name: officialId ? decrypt(victim.nameEncrypted) : undefined,
         caseType: victim.caseType,
         district: victim.district,
         state: victim.state,
@@ -151,7 +175,9 @@ app.get("/victim/:victimId", async (req, res) => {
   }
 });
 
-// 4. DISTRESS SCORE — save, check threshold, auto-alert, update priority queue
+/**
+ * 4. DISTRESS SCORE — save, check threshold, auto-alert, update priority queue
+ */
 app.post("/distress-score", async (req, res) => {
   try {
     const { victimId, score, contributingFactors } = req.body;
@@ -190,6 +216,17 @@ app.post("/distress-score", async (req, res) => {
         trend: result.trend,
         createdAt: newAlert.createdAt
       });
+
+      // Email officials matching district
+      const victimRecord = await Victim.findOne({ victimId });
+      if (victimRecord) {
+        const districtOfficials = await Official.find({ district: victimRecord.district, email: { $exists: true } });
+        for (const official of districtOfficials) {
+          sendAlertEmail(official.email, {
+            victimId, riskLevel: result.riskLevel, score: result.latestScore, trend: result.trend
+          });
+        }
+      }
     }
 
     res.json({
@@ -226,7 +263,9 @@ app.get("/distress-score/:victimId", async (req, res) => {
   }
 });
 
-// 5. ALERTS — list + acknowledge/resolve
+/**
+ * 5. ALERTS — list + acknowledge/resolve
+ */
 app.get("/alerts", async (req, res) => {
   try {
     const { status, riskLevel, officialId } = req.query;
@@ -237,7 +276,6 @@ app.get("/alerts", async (req, res) => {
     const alerts = await Alert.find(filter).sort({ createdAt: -1 });
 
     if (officialId) {
-      // log once per bulk view rather than per-alert
       for (const alert of alerts) {
         await AccessLog.create({ officialId, victimId: alert.victimId, action: "view_alert" });
       }
@@ -270,13 +308,17 @@ app.patch("/alerts/:alertId", async (req, res) => {
   }
 });
 
-// 6. PRIORITY CASES
+/**
+ * 6. PRIORITY CASES
+ */
 app.get("/priority-cases", (req, res) => {
   const n = parseInt(req.query.n) || 5;
   res.json({ success: true, topCases: casePriorityQueue.getTopN(n) });
 });
 
-// 7. ACCESS LOG — see who viewed what (transparency/audit trail)
+/**
+ * 7. ACCESS LOG — see who viewed what (transparency/audit trail)
+ */
 app.get("/access-logs", async (req, res) => {
   try {
     const { victimId, officialId } = req.query;
@@ -291,7 +333,32 @@ app.get("/access-logs", async (req, res) => {
   }
 });
 
-// SERVER START
+/**
+ * 8. INTERVENTIONS — Log official action taken
+ */
+app.post("/interventions", async (req, res) => {
+  try {
+    const { victimId, alertId, type, notes, performedBy } = req.body;
+    if (!victimId || !type) {
+      return res.status(400).json({ success: false, message: "victimId and type are required" });
+    }
+
+    const intervention = await Intervention.create({
+      victimId,
+      alertId: alertId || undefined,
+      type,
+      notes,
+      performedBy
+    });
+
+    res.status(201).json({ success: true, intervention });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+/**
+ * SERVER START
+ */
 httpServer.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
   console.log(`Socket.io ready for real-time alerts`);
